@@ -1,0 +1,57 @@
+# escape=`
+ARG WINDOWS_DOCKER_TAG="10.0.17763.1158"
+ARG JAVA_VERSION="13.0.3"
+ARG JAVA_ZIP_VERSION="13-openjdk-debug-13.0.3.3-1"
+ARG JAVA_SHA256="be4c03ee15953233f00a4e04d4ff38ef30ed47c5d252f2caa56d2ee5dbaa3161"
+
+
+FROM mcr.microsoft.com/windows/servercore:$WINDOWS_DOCKER_TAG AS builder
+
+ARG JAVA_VERSION
+ARG JAVA_ZIP_VERSION
+ARG JAVA_SHA256
+ARG JAVA_HOME_ARG="C:\\java-${JAVA_ZIP_VERSION}.windows.ojdkbuild.x86_64"
+
+SHELL ["powershell","-Command","$ErrorActionPreference='stop'; $ProgressPreference='SilentlyContinue';"]
+
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 ; `
+    Invoke-WebRequest -OutFile openjdk.zip -UseBasicParsing  "https://github.com/ojdkbuild/ojdkbuild/releases/download/java-$($env:JAVA_ZIP_VERSION)/java-$($env:JAVA_ZIP_VERSION).windows.ojdkbuild.x86_64.zip"; `
+    if ((Get-FileHash openjdk.zip -Algorithm sha256).Hash.toLower() -ne $env:JAVA_SHA256) {exit 1} ; `
+    Expand-Archive openjdk.zip -DestinationPath C:\ ; `
+    Move-Item -Path C:\\java-$($env:JAVA_ZIP_VERSION).windows.ojdkbuild.x86_64 -Destination c:\java;`
+    Remove-Item -Path openjdk.zip
+
+
+ENV ES_VERSION="7.6.2" `
+    ES_SHA512="0929608ed9f22d3667d1745e72c8d7f0a524462a41cb8e19ae02d2b048fec82851d7660c8d171def77c4a8e0833c6f585601d61866e91c0d6073b8fd2f10d2ed"
+
+RUN Invoke-WebRequest -OutFile es.zip -UseBasicParsing "https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-$($env:ES_VERSION)-windows-x86_64.zip"; `
+    If ((Get-FileHash es.zip -Algorithm sha512).Hash.toLower() -ne $env:ES_SHA512) {exit 1}`
+    Expand-Archive es.zip -DestinationPath c:\ ;`
+    Move-Item -Path c:\elasticsearch-$($env:ES_VERSION) -Destination c:\elasticsearch
+
+# Elasticsearch
+
+FROM mcr.microsoft.com/powershell:lts-nanoserver-1809
+
+SHELL ["pwsh","-Command","$ErrorActionPreference='stop'; $ProgressPreference='SilentlyContinue';"]
+
+RUN mkdir c:\tmp;
+#`
+#    New-Item -Path c:\tmp -ItemType Directory;
+
+EXPOSE 9200 9300
+WORKDIR C:\java
+COPY --from=builder c:\java .
+
+ENV PATH="c:\\java\\bin;%PATH%"
+ENV ES_TMPDIR "c:\tmp"
+
+
+
+WORKDIR C:\elasticsearch
+
+COPY --from=builder c:\elasticsearch\ .
+COPY ./config ./config
+
+ENTRYPOINT ["C:\\elasticsearch\\bin\\elasticsearch.bat","-d"]
